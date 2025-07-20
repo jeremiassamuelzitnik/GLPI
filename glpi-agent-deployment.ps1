@@ -10,8 +10,6 @@ param (
     [string]$setupLocation = "https://github.com/glpi-project/glpi-agent/releases/download/$setupVersion",
     [string]$setupNightlyLocation = "https://nightly.glpi-project.org/glpi-agent",
     [string]$setup = "GLPI-Agent-$setupVersion-x64.msi",
-    [string]$reconfigure = "Yes",
-    [string]$repair = "No",
     [string]$allowVerbose = "Yes",
     [string]$runUninstallFusionInventoryAgent = "No",
     [string]$uninstallOcsAgent = "No"
@@ -24,13 +22,13 @@ param (
 ########################################
 
 $setupOptions= "/quiet RUNNOW=1 SERVER=$glpiServer"
-function Is-Http {
+function Test-Http {
     param ($strng) return $strng -match "^(http(s?)).*"
 }
-function Is-Nightly {
+function Test-Nightly {
     param ($strng) return $strng -match "-(git[0-9a-f]{8})$"
 }
-function Is-InstallationNeeded {
+function Test-InstallationNeeded {
     param ($setupVersion)
     $regPaths = @("HKLM:\SOFTWARE\GLPI-Agent\Installer", "HKLM:\SOFTWARE\Wow6432Node\GLPI-Agent\Installer")
     foreach ($path in $regPaths) {
@@ -97,7 +95,7 @@ function Get-GLPIAgentWin64Info {
         $webClient.Dispose()
     }
 }
-function Remove-OCSAgents {
+function Invoke-OCSAgentCleanup {
     try {
         $uninstallPaths = @(
             "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\OCS Inventory Agent",
@@ -120,17 +118,17 @@ function Remove-OCSAgents {
         if ($allowVerbose -ne "No") { Write-Verbose "Error removing OCS Agents: $_" -Verbose }
     }
 }
-function Has-Option { 
+function Test-OptionPresent {
     param ($opt) $pattern = "\b$opt=.+\b"; return $setupOptions -match $pattern
 }
-function Is-SelectedReconfigure {
+function Test-SelectedReconfigure {
     if ($reconfigure -ne "No") {
         if ($allowVerbose -ne "No") { Write-Verbose "Installation reconfigure: $setupVersion" -Verbose }
         return $true
     }
     return $false
 }
-function Is-SelectedRepair {
+function Test-SelectedRepair {
     if ($repair -ne "No") {
         if ($allowVerbose -ne "No") { Write-Verbose "Installation repairing: $setupVersion" -Verbose }
         return $true
@@ -147,22 +145,22 @@ function Get-Sha256Hash {
         return $null
     }
 }
-function Msi-ServerAvailable {
+function Test-MsiServerAvailable {
     $maxLoops = 120
     $loopCount = 0
-    $wmiService = Get-WmiObject -Class Win32_Service -Filter "Name='MsiServer'"
+    $wmiService = Get-CimInstance -ClassName Win32_Service -Filter "Name='MsiServer'"
     while ($loopCount -lt $maxLoops) {
         if ($loopCount -gt 0) { Start-Sleep -Seconds 1 }
         if ($wmiService.State -eq "Stopped") { return $true }
         try {
             $result = $wmiService.StopService()
             if ($result.ReturnValue -eq 0) { return $true }
-        } catch {}
+        } catch {if ($allowVerbose -ne "No") { Write-Verbose "Could not determine MsiServer status!" -Verbose }}
         $loopCount++
     }
     return $false
 }
-function Msi-Exec {
+function Invoke-MsiExec {
     param ($options)
     $maxLoops = 3
     $loopCount = 0
@@ -172,7 +170,7 @@ function Msi-Exec {
             if ($allowVerbose -ne "No") { Write-Verbose "Next attempt in 30 seconds..." -Verbose }
             Start-Sleep -Seconds 30
         }
-        if (Msi-ServerAvailable) {
+        if (Test-MsiServerAvailable) {
             if ($allowVerbose -ne "No") { Write-Verbose "Running: MsiExec.exe $options" -Verbose }
             $process = Start-Process -FilePath "MsiExec.exe" -ArgumentList $options -Wait -PassThru -NoNewWindow
             $result = $process.ExitCode
@@ -191,7 +189,7 @@ function Msi-Exec {
     }
     return $result
 }
-function Try-DeleteOrSchedule {
+function Invoke-DeleteOrSchedule  {
     param (
         [Parameter(Mandatory = $true)]
         [string]$Path
@@ -212,7 +210,7 @@ function Try-DeleteOrSchedule {
 ##### MAIN #####
 ################
 # Get the latest version if necessary
-if ($uninstallOcsAgent -eq "Yes") { Remove-OCSAgents }
+if ($uninstallOcsAgent -eq "Yes") { Invoke-OCSAgentCleanup }
 if ($runUninstallFusionInventoryAgent -eq "Yes") { Uninstall-FusionInventoryAgent }
 if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64") {
     if ($allowVerbose -ne "No") {
@@ -245,28 +243,27 @@ if ($setupVersion -eq "Latest") {
 $setup = "GLPI-Agent-$setupVersion-x64.msi"
 $bInstall = $false
 $installOrRepair = "/i"
-if (Is-InstallationNeeded -SetupVersion $setupVersion) {
+if (Test-InstallationNeeded -SetupVersion $setupVersion) {
     $bInstall = $true
-} elseif (Is-SelectedRepair) {
+} elseif (Test-SelectedRepair) {
     $installOrRepair = "/fa"
     $bInstall = $true
-} elseif (Is-SelectedReconfigure) {
-    if (-not (Has-Option "REINSTALL")) {
+} elseif (Test-SelectedReconfigure) {
+    if (-not (Test-OptionPresent "REINSTALL")) {
         $setupOptions += " REINSTALL=feat_AGENT"
     }
     $bInstall = $true
 }
 if ($bInstall) {
-    if (Is-Nightly $setupVersion) {
+    if (Test-Nightly $setupVersion) {
         $setupLocation = $setupNightlyLocation
     }
-    if (Is-Http $setupLocation) {
+    if (Test-Http $setupLocation) {
         $installerPath = Save-WebBinary -SetupLocation $setupLocation -Setup $setup
         if ($installerPath) {
-            $msiResult = Msi-Exec -options "$installOrRepair `"$installerPath`" $setupOptions"
             if ($allowVerbose -ne "No") { Write-Verbose "Deleting `"$installerPath`"" -Verbose }
             Start-Sleep -Seconds 5
-            Try-DeleteOrSchedule -Path $installerPath -Verbose
+            Invoke-DeleteOrSchedule  -Path $installerPath -Verbose
         } else {
             if ($allowVerbose -ne "No") { Write-Verbose "Installer download or verification failed. Aborting installation." -Verbose }
             exit 6
@@ -275,7 +272,7 @@ if ($bInstall) {
         if ($setupLocation -and $setupLocation -ne ".") {
             $setup = Join-Path $setupLocation $setup
         }
-        Msi-Exec -options "$installOrRepair `"$setup`" $setupOptions"
+        Invoke-MsiExec -options "$installOrRepair `"$setup`" $setupOptions"
     }
 } else {
     if ($allowVerbose -ne "No") { Write-Verbose "It isn't needed the installation of '$setup'." -Verbose }
