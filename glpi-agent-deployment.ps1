@@ -10,11 +10,11 @@ param (
     [string]$setupLocation = "https://github.com/glpi-project/glpi-agent/releases/download/$setupVersion",
     [string]$setupNightlyLocation = "https://nightly.glpi-project.org/glpi-agent",
     [string]$setup = "GLPI-Agent-$setupVersion-x64.msi",
-    [string]$Reconfigure = "Yes",
-    [string]$Repair = "No",
-    [string]$Verbose = "Yes",
-    [string]$RunUninstallFusionInventoryAgent = "No",
-    [string]$UninstallOcsAgent = "No"
+    [string]$reconfigure = "Yes",
+    [string]$repair = "No",
+    [string]$allowVerbose = "Yes",
+    [string]$runUninstallFusionInventoryAgent = "No",
+    [string]$uninstallOcsAgent = "No"
 )
 ########################################
 #                                      #
@@ -37,13 +37,13 @@ function Is-InstallationNeeded {
         $currentVersion = (Get-ItemProperty -Path $path -Name "Version" -ErrorAction SilentlyContinue).Version
         if ($currentVersion) {
             if ($currentVersion -ne $setupVersion) {
-                if ($Verbose -ne "No") { Write-Verbose "Installation needed: $currentVersion -> $setupVersion" -Verbose }
+                if ($allowVerbose -ne "No") { Write-Verbose "Installation needed: $currentVersion -> $setupVersion" -Verbose }
                 return $true
             }
             return $false
         }
     }
-    if ($Verbose -ne "No") { Write-Verbose "Installation needed: $setupVersion" -Verbose }
+    if ($allowVerbose -ne "No") { Write-Verbose "Installation needed: $setupVersion" -Verbose }
     return $true
 }
 function Save-WebBinary {
@@ -51,21 +51,21 @@ function Save-WebBinary {
     try {
         $url = "$setupLocation/$setup"
         $tempPath = Join-Path $env:TEMP $setup
-        if ($Verbose -ne "No") { Write-Verbose "Downloading: $url" -Verbose }
+        if ($allowVerbose -ne "No") { Write-Verbose "Downloading: $url" -Verbose }
         $webClient = New-Object System.Net.WebClient
         $webClient.DownloadFile($url, $tempPath)
         if ($expectedSha256) {
             $actualHash = Get-Sha256Hash -filePath $tempPath
             if ($actualHash -ne $expectedSha256) {
-                if ($Verbose -ne "No") { Write-Verbose "SHA256 hash verification failed!" -Verbose }
+                if ($allowVerbose -ne "No") { Write-Verbose "SHA256 hash verification failed!" -Verbose }
                 Remove-Item -Path $tempPath -Force -ErrorAction SilentlyContinue
                 return $null
             }
-            if ($Verbose -ne "No") { Write-Verbose "SHA256 hash verification passed." -Verbose }
+            if ($allowVerbose -ne "No") { Write-Verbose "SHA256 hash verification passed." -Verbose }
         }
         return $tempPath
     } catch {
-        if ($Verbose -ne "No") { Write-Verbose "Error downloading '$url': $_" -Verbose }
+        if ($allowVerbose -ne "No") { Write-Verbose "Error downloading '$url': $_" -Verbose }
         return $null
     } finally {
         if ($webClient) { $webClient.Dispose() }
@@ -117,22 +117,22 @@ function Remove-OCSAgents {
             }
         }
     } catch {
-        if ($Verbose -ne "No") { Write-Verbose "Error removing OCS Agents: $_" -Verbose }
+        if ($allowVerbose -ne "No") { Write-Verbose "Error removing OCS Agents: $_" -Verbose }
     }
 }
 function Has-Option { 
     param ($opt) $pattern = "\b$opt=.+\b"; return $setupOptions -match $pattern
 }
 function Is-SelectedReconfigure {
-    if ($Reconfigure -ne "No") {
-        if ($Verbose -ne "No") { Write-Verbose "Installation reconfigure: $setupVersion" -Verbose }
+    if ($reconfigure -ne "No") {
+        if ($allowVerbose -ne "No") { Write-Verbose "Installation reconfigure: $setupVersion" -Verbose }
         return $true
     }
     return $false
 }
 function Is-SelectedRepair {
-    if ($Repair -ne "No") {
-        if ($Verbose -ne "No") { Write-Verbose "Installation repairing: $setupVersion" -Verbose }
+    if ($repair -ne "No") {
+        if ($allowVerbose -ne "No") { Write-Verbose "Installation repairing: $setupVersion" -Verbose }
         return $true
     }
     return $false
@@ -143,7 +143,7 @@ function Get-Sha256Hash {
         $sha256 = Get-FileHash -Path $filePath -Algorithm SHA256 -ErrorAction Stop
         return $sha256.Hash
     } catch {
-        if ($Verbose -ne "No") { Write-Verbose "Error calculating SHA256 hash: $_" -Verbose }
+        if ($allowVerbose -ne "No") { Write-Verbose "Error calculating SHA256 hash: $_" -Verbose }
         return $null
     }
 }
@@ -169,11 +169,11 @@ function Msi-Exec {
     $result = 0
     while ($loopCount -lt $maxLoops) {
         if ($loopCount -gt 0) {
-            if ($Verbose -ne "No") { Write-Verbose "Next attempt in 30 seconds..." -Verbose }
+            if ($allowVerbose -ne "No") { Write-Verbose "Next attempt in 30 seconds..." -Verbose }
             Start-Sleep -Seconds 30
         }
         if (Msi-ServerAvailable) {
-            if ($Verbose -ne "No") { Write-Verbose "Running: MsiExec.exe $options" -Verbose }
+            if ($allowVerbose -ne "No") { Write-Verbose "Running: MsiExec.exe $options" -Verbose }
             $process = Start-Process -FilePath "MsiExec.exe" -ArgumentList $options -Wait -PassThru -NoNewWindow
             $result = $process.ExitCode
             if ($result -ne 1618) { break }
@@ -183,11 +183,11 @@ function Msi-Exec {
         $loopCount++
     }
     if ($result -eq 0) {
-        if ($Verbose -ne "No") { Write-Verbose "Deployment done!" -Verbose }
+        if ($allowVerbose -ne "No") { Write-Verbose "Deployment done!" -Verbose }
     } elseif ($result -eq 1618) {
-        if ($Verbose -ne "No") { Write-Verbose "Deployment failed: MSI Installer is busy!" -Verbose }
+        if ($allowVerbose -ne "No") { Write-Verbose "Deployment failed: MSI Installer is busy!" -Verbose }
     } else {
-        if ($Verbose -ne "No") { Write-Verbose "Deployment failed! (Err=$result)" -Verbose }
+        if ($allowVerbose -ne "No") { Write-Verbose "Deployment failed! (Err=$result)" -Verbose }
     }
     return $result
 }
@@ -199,12 +199,12 @@ function Try-DeleteOrSchedule {
     try {
         Start-Sleep 5
         Remove-Item -Path "$Path" -Force -ErrorAction Stop
-        if ($Verbose -ne "No") {Write-Verbose "Deleted: $Path" -Verbose}
+        if ($allowVerbose -ne "No") {Write-Verbose "Deleted: $Path" -Verbose}
     } catch {
         if (-not (Test-Path $path)) {
-            if ($Verbose -ne "No") {Write-Warning "File does not exist: $path"}
+            if ($allowVerbose -ne "No") {Write-Warning "File does not exist: $path"}
         }else{
-           if ($Verbose -ne "No") {Write-Warning "Failed to delete the file: $path"}
+           if ($allowVerbose -ne "No") {Write-Warning "Failed to delete the file: $path"}
         }
     }
 }
@@ -212,16 +212,16 @@ function Try-DeleteOrSchedule {
 ##### MAIN #####
 ################
 # Get the latest version if necessary
-if ($UninstallOcsAgent -eq "Yes") { Remove-OCSAgents }
-if ($RunUninstallFusionInventoryAgent -eq "Yes") { Uninstall-FusionInventoryAgent }
+if ($uninstallOcsAgent -eq "Yes") { Remove-OCSAgents }
+if ($runUninstallFusionInventoryAgent -eq "Yes") { Uninstall-FusionInventoryAgent }
 if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64") {
-    if ($Verbose -ne "No") {
-        if ($Verbose -ne "No") {Write-Verbose "This script only supports x64 architecture. Current architecture: $env:PROCESSOR_ARCHITECTURE" -Verbose}
-        if ($Verbose -ne "No") {Write-Verbose "Deployment aborted!" -Verbose}
+    if ($allowVerbose -ne "No") {
+        if ($allowVerbose -ne "No") {Write-Verbose "This script only supports x64 architecture. Current architecture: $env:PROCESSOR_ARCHITECTURE" -Verbose}
+        if ($allowVerbose -ne "No") {Write-Verbose "Deployment aborted!" -Verbose}
     }
     exit 1
 } else {
-    if ($Verbose -ne "No") { Write-Verbose "System architecture detected: $env:PROCESSOR_ARCHITECTURE" -Verbose }
+    if ($allowVerbose -ne "No") { Write-Verbose "System architecture detected: $env:PROCESSOR_ARCHITECTURE" -Verbose }
 }
 if ($setupVersion -eq "Latest") {
     $info = Get-GLPIAgentWin64Info
@@ -231,13 +231,13 @@ if ($setupVersion -eq "Latest") {
         $setupVersion = ($setup -replace "^GLPI-Agent-", "") -replace "-x64\.msi$", ""
         $setupLocation = $downloadUrl -replace "/$setup$", ""
         $expectedSha256 = $info[1]
-        if ($Verbose -ne "No") {
+        if ($allowVerbose -ne "No") {
             Write-Verbose "Latest version: $setupVersion" -Verbose
             Write-Verbose "Download: $setupLocation" -Verbose
             Write-Verbose "SHA256: $expectedSha256" -Verbose
         }
     } else {
-        if ($Verbose -ne "No") { Write-Verbose "Failed to fetch latest version info. Deployment aborted!" -Verbose }
+        if ($allowVerbose -ne "No") { Write-Verbose "Failed to fetch latest version info. Deployment aborted!" -Verbose }
         exit 5
     }
 }
@@ -264,11 +264,11 @@ if ($bInstall) {
         $installerPath = Save-WebBinary -SetupLocation $setupLocation -Setup $setup
         if ($installerPath) {
             $msiResult = Msi-Exec -options "$installOrRepair `"$installerPath`" $setupOptions"
-            if ($Verbose -ne "No") { Write-Verbose "Deleting `"$installerPath`"" -Verbose }
+            if ($allowVerbose -ne "No") { Write-Verbose "Deleting `"$installerPath`"" -Verbose }
             Start-Sleep -Seconds 5
             Try-DeleteOrSchedule -Path $installerPath -Verbose
         } else {
-            if ($Verbose -ne "No") { Write-Verbose "Installer download or verification failed. Aborting installation." -Verbose }
+            if ($allowVerbose -ne "No") { Write-Verbose "Installer download or verification failed. Aborting installation." -Verbose }
             exit 6
         }
     } else {
@@ -278,5 +278,5 @@ if ($bInstall) {
         Msi-Exec -options "$installOrRepair `"$setup`" $setupOptions"
     }
 } else {
-    if ($Verbose -ne "No") { Write-Verbose "It isn't needed the installation of '$setup'." -Verbose }
+    if ($allowVerbose -ne "No") { Write-Verbose "It isn't needed the installation of '$setup'." -Verbose }
 }
