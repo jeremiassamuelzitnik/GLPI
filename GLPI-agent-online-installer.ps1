@@ -29,7 +29,7 @@
 # GLPI Agent Unattended Deployment PowerShell Script (x64 only)
 # USER SETTINGS
 param (
-	[string]$setupOptions = '/quiet RUNNOW=1 SERVER="http://YOUR_SERVER/glpi/plugins/glpiinventory/" ADD_FIREWALL_EXCEPTION=1 ADDLOCAL=feat_AGENT,feat_DEPLOY EXECMODE=1',
+	[string]$setupOptions = '/quiet RUNNOW=1 SERVER=http://YOUR_SERVER/glpi/plugins/glpiinventory/ ADD_FIREWALL_EXCEPTION=1 ADDLOCAL=feat_AGENT,feat_DEPLOY EXECMODE=1',
     [string]$expectedSha256 = "",
     [string]$setupVersion = "Latest",
     [string]$setupLocation = "https://github.com/glpi-project/glpi-agent/releases/download/$setupVersion",
