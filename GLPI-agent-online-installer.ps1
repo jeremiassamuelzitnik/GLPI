@@ -1,30 +1,53 @@
-﻿# GLPI Agent Unattended Deployment PowerShell Script (x64 only)
+﻿<#
+.SYNOPSIS
+    Script for the unattended installation of the GLPI agent (x64 only).
+.DESCRIPTION
+    Downloads, verifies, and installs the GLPI agent from GitHub or a local location. Allows configuration of installation options, uninstallation of OCS agents, and verification of system architecture.
+.PARAMETER setupOptions
+    Installation options for MsiExec (e.g., '/quiet RUNNOW=1 SERVER="http://..."'). Required.
+.PARAMETER expectedSha256
+    Expected SHA256 hash of the installer. Leave blank to skip verification.
+.PARAMETER setupVersion
+    Version of the agent to install. Use 'Latest' for the latest available version.
+.PARAMETER setupLocation
+    URL or local path of the installer. By default, uses GitHub for the specified version.
+.PARAMETER setupNightlyLocation
+    URL for nightly versions of the GLPI agent.
+.PARAMETER setup
+    Temporary path of the downloaded MSI file.
+.PARAMETER allowVerbose
+    Enables verbose messages if set to 'Yes'. Default: 'Yes'.
+.PARAMETER runUninstallFusionInventoryAgent
+    Uninstalls the FusionInventory agent if set to 'Yes'. Default: 'No'. (Function not implemented).
+.PARAMETER uninstallOcsAgent
+    Uninstalls the OCS Inventory agent if set to 'Yes'. Default: 'No'.
+.PARAMETER reconfigure
+    Reconfigures the existing installation if set to 'Yes'. Default: 'No'.
+.PARAMETER repair
+    Repairs the existing installation if set to 'Yes'. Default: 'No'.
+#>
+# GLPI Agent Unattended Deployment PowerShell Script (x64 only)
 # USER SETTINGS
 param (
-	# Mandatory
-    [string]$setupOptions= '/quiet SERVER="http://YOUR_SERVER/glpi/plugins/glpiinventory/front/communication.php" ADD_FIREWALL_EXCEPTION=1 RUNNOW=1 ADDLOCAL=feat_AGENT,feat_DEPLOY EXECMODE=1',
-    # Recomended
-	[string]$expectedSha256 = "",  # Leave blank to skip
-	# Optional
-    [string]$setupVersion = "Latest",  # Enter 'Latest' to install the latest available version (hash is not required).
+	[string]$setupOptions = '/quiet RUNNOW=1 SERVER="http://YOUR_SERVER/glpi/plugins/glpiinventory/" ADD_FIREWALL_EXCEPTION=1 ADDLOCAL=feat_AGENT,feat_DEPLOY EXECMODE=1',
+    [string]$expectedSha256 = "",
+    [string]$setupVersion = "Latest",
     [string]$setupLocation = "https://github.com/glpi-project/glpi-agent/releases/download/$setupVersion",
     [string]$setupNightlyLocation = "https://nightly.glpi-project.org/glpi-agent",
-    [string]$setup = "GLPI-Agent-$setupVersion-x64.msi",
+    [string]$setup = "$env:temp\GLPI-Agent-$setupVersion-x64.msi",
     [string]$allowVerbose = "Yes",
     [string]$runUninstallFusionInventoryAgent = "No",
-    [string]$uninstallOcsAgent = "No"
+    [string]$uninstallOcsAgent = "No",
+    [string]$reconfigure = "No",
+    [string]$repair = "No"
 )
-########################################
-#                                      #
-#   🚫 Do not modify anything below    #
-#        this line.                    #
-#                                      #
-########################################
 function Test-Http {
-    param ($strng) return $strng -match "^(http(s?)).*"
+    param ($strng)
+    return [System.Uri]::IsWellFormedUriString($strng, [System.UriKind]::Absolute)
 }
 function Test-Nightly {
-    param ($strng) return $strng -match "-(git[0-9a-f]{8})$"
+    param ($strng)
+    return $strng -match "-(git[0-9a-f]{8})$"
 }
 function Test-InstallationNeeded {
     param ($setupVersion)
@@ -76,18 +99,18 @@ function Get-GLPIAgentWin64Info {
         $release = ConvertFrom-Json $releaseJson
         $version = $release.tag_name
         $x64Asset = $release.assets | Where-Object { $_.name -like "GLPI-Agent-$version-x64.msi" }
-        if ($x64Asset -and $x64Asset.digest) {
+        if ($x64Asset -and $x64Asset.digest -and ($x64Asset.digest -match 'sha256:([0-9a-fA-F]+)')) {
             $result = @(
                 $x64Asset.browser_download_url,
-                $x64Asset.digest -replace 'sha256:', ''
+                $matches[1]
             )
             return $result
         } else {
-            Write-Verbose "No files or digest found for version $version of Windows x64" -Verbose
+            if ($allowVerbose -ne "No") { Write-Verbose "No files or digest found for version $version of Windows x64" -Verbose }
             return $null
         }
     } catch {
-        Write-Verbose "Error retrieving information: $_" -Verbose
+        if ($allowVerbose -ne "No") { Write-Verbose "Error retrieving information: $_" -Verbose }
         return $null
     } finally {
         $webClient.Dispose()
@@ -103,12 +126,18 @@ function Invoke-OCSAgentCleanup {
         )
         foreach ($path in $uninstallPaths) {
             $uninstallString = (Get-ItemProperty -Path $path -ErrorAction SilentlyContinue).UninstallString
-            if ($uninstallString) {
+            if ($uninstallString -and (Test-Path $path)) {
                 Stop-Service -Name "OCS INVENTORY SERVICE" -Force -ErrorAction SilentlyContinue
                 Start-Process -FilePath "cmd.exe" -ArgumentList "/C $uninstallString /S /NOSPLASH" -Wait -NoNewWindow
-                Remove-Item -Path "$env:ProgramFiles\OCS Inventory Agent" -Recurse -Force -ErrorAction SilentlyContinue
-                Remove-Item -Path "$env:ProgramFiles(x86)\OCS Inventory Agent" -Recurse -Force -ErrorAction SilentlyContinue
-                Remove-Item -Path "$env:SystemDrive\ocs-ng" -Recurse -Force -ErrorAction SilentlyContinue
+                if (Test-Path "$env:ProgramFiles\OCS Inventory Agent") {
+                    Remove-Item -Path "$env:ProgramFiles\OCS Inventory Agent" -Recurse -Force -ErrorAction SilentlyContinue
+                }
+                if (Test-Path "$env:ProgramFiles(x86)\OCS Inventory Agent") {
+                    Remove-Item -Path "$env:ProgramFiles(x86)\OCS Inventory Agent" -Recurse -Force -ErrorAction SilentlyContinue
+                }
+                if (Test-Path "$env:SystemDrive\ocs-ng") {
+                    Remove-Item -Path "$env:SystemDrive\ocs-ng" -Recurse -Force -ErrorAction SilentlyContinue
+                }
                 Start-Process -FilePath "sc.exe" -ArgumentList "delete 'OCS INVENTORY'" -Wait -NoNewWindow
             }
         }
@@ -117,7 +146,9 @@ function Invoke-OCSAgentCleanup {
     }
 }
 function Test-OptionPresent {
-    param ($opt) $pattern = "\b$opt=.+\b"; return $setupOptions -match $pattern
+    param ($opt)
+    $pattern = "\b$opt=.+\b"
+    return $setupOptions -match $pattern
 }
 function Test-SelectedReconfigure {
     if ($reconfigure -ne "No") {
@@ -144,25 +175,31 @@ function Get-Sha256Hash {
     }
 }
 function Test-MsiServerAvailable {
-    $maxLoops = 120
+    $maxLoops = 6
     $loopCount = 0
-    $wmiService = Get-CimInstance -ClassName Win32_Service -Filter "Name='MsiServer'"
     while ($loopCount -lt $maxLoops) {
-        if ($loopCount -gt 0) { Start-Sleep -Seconds 1 }
+        $wmiService = Get-CimInstance -ClassName Win32_Service -Filter "Name='MsiServer'"
+		if ($loopCount -gt 0) { Start-Sleep -Seconds 10 }
         if ($wmiService.State -eq "Stopped") { return $true }
         try {
             $result = $wmiService.StopService()
             if ($result.ReturnValue -eq 0) { return $true }
-        } catch {if ($allowVerbose -ne "No") { Write-Verbose "Could not determine MsiServer status!" -Verbose }}
+        } catch {
+            if ($allowVerbose -ne "No") { Write-Verbose "Could not determine MsiServer status!" -Verbose }
+        }
         $loopCount++
     }
     return $false
 }
 function Invoke-MsiExec {
-    param ($options)
+    param ($options, $setup)
     $maxLoops = 3
     $loopCount = 0
     $result = 0
+    if (-not (Test-Path $setup)) {
+        if ($allowVerbose -ne "No") { Write-Verbose "Installer file not found: $setup" -Verbose }
+        return 1
+    }
     while ($loopCount -lt $maxLoops) {
         if ($loopCount -gt 0) {
             if ($allowVerbose -ne "No") { Write-Verbose "Next attempt in 30 seconds..." -Verbose }
@@ -187,7 +224,7 @@ function Invoke-MsiExec {
     }
     return $result
 }
-function Invoke-DeleteOrSchedule  {
+function Invoke-DeleteOrSchedule {
     param (
         [Parameter(Mandatory = $true)]
         [string]$Path
@@ -195,25 +232,23 @@ function Invoke-DeleteOrSchedule  {
     try {
         Start-Sleep 5
         Remove-Item -Path "$Path" -Force -ErrorAction Stop
-        if ($allowVerbose -ne "No") {Write-Verbose "Deleted: $Path" -Verbose}
+        if ($allowVerbose -ne "No") { Write-Verbose "Deleted: $Path" -Verbose }
     } catch {
-        if (-not (Test-Path $path)) {
-            if ($allowVerbose -ne "No") {Write-Warning "File does not exist: $path"}
-        }else{
-           if ($allowVerbose -ne "No") {Write-Warning "Failed to delete the file: $path"}
+        if (-not (Test-Path $Path)) {
+            if ($allowVerbose -ne "No") { Write-Verbose "File does not exist: $Path" -Verbose }
+        } else {
+            if ($allowVerbose -ne "No") { Write-Verbose "Failed to delete the file: $Path" -Verbose }
         }
     }
 }
 ################
 ##### MAIN #####
 ################
-# Get the latest version if necessary
 if ($uninstallOcsAgent -eq "Yes") { Invoke-OCSAgentCleanup }
-if ($runUninstallFusionInventoryAgent -eq "Yes") { Uninstall-FusionInventoryAgent }
 if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64") {
     if ($allowVerbose -ne "No") {
-        if ($allowVerbose -ne "No") {Write-Verbose "This script only supports x64 architecture. Current architecture: $env:PROCESSOR_ARCHITECTURE" -Verbose}
-        if ($allowVerbose -ne "No") {Write-Verbose "Deployment aborted!" -Verbose}
+        Write-Verbose "This script only supports x64 architecture. Current architecture: $env:PROCESSOR_ARCHITECTURE" -Verbose
+        Write-Verbose "Deployment aborted!" -Verbose
     }
     exit 1
 } else {
@@ -237,7 +272,6 @@ if ($setupVersion -eq "Latest") {
         exit 5
     }
 }
-
 $setup = "GLPI-Agent-$setupVersion-x64.msi"
 $bInstall = $false
 $installOrRepair = "/i"
@@ -259,9 +293,9 @@ if ($bInstall) {
     if (Test-Http $setupLocation) {
         $installerPath = Save-WebBinary -SetupLocation $setupLocation -Setup $setup
         if ($installerPath) {
+            $null = Invoke-MsiExec -options "$installOrRepair `"$installerPath`" $setupOptions" -setup $installerPath
             if ($allowVerbose -ne "No") { Write-Verbose "Deleting `"$installerPath`"" -Verbose }
-            Start-Sleep -Seconds 5
-            Invoke-DeleteOrSchedule  -Path $installerPath -Verbose
+            Invoke-DeleteOrSchedule -Path $installerPath
         } else {
             if ($allowVerbose -ne "No") { Write-Verbose "Installer download or verification failed. Aborting installation." -Verbose }
             exit 6
@@ -269,9 +303,13 @@ if ($bInstall) {
     } else {
         if ($setupLocation -and $setupLocation -ne ".") {
             $setup = Join-Path $setupLocation $setup
+            if (-not (Test-Path $setup)) {
+                if ($allowVerbose -ne "No") { Write-Verbose "Local installer not found: $setup. Aborting installation." -Verbose }
+                exit 7
+            }
         }
-        Invoke-MsiExec -options "$installOrRepair `"$setup`" $setupOptions"
+        Invoke-MsiExec -options "$installOrRepair `"$setup`" $setupOptions" -setup $setup
     }
 } else {
-    if ($allowVerbose -ne "No") { Write-Verbose "It isn't needed the installation of '$setup'." -Verbose }
+    if ($allowVerbose -ne "No") { Write-Verbose "No installation needed for '$setup'." -Verbose }
 }
