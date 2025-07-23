@@ -29,7 +29,7 @@
 # GLPI Agent Unattended Deployment PowerShell Script (x64 only)
 # USER SETTINGS
 param (
-	[string]$setupOptions = '/quiet RUNNOW=1 SERVER=http://YOUR_SERVER/glpi/plugins/glpiinventory/ ADD_FIREWALL_EXCEPTION=1 ADDLOCAL=feat_AGENT,feat_DEPLOY EXECMODE=1',
+	[string]$setupOptions = '/quiet RUNNOW=1 SERVER=http://soporte.ctl.tech/marketplace/glpiinventory/ ADD_FIREWALL_EXCEPTION=1 ADDLOCAL=feat_AGENT,feat_DEPLOY EXECMODE=1',
     [string]$expectedSha256 = "",
     [string]$setupVersion = "Latest",
     [string]$setupLocation = "https://github.com/glpi-project/glpi-agent/releases/download/$setupVersion",
@@ -167,8 +167,8 @@ function Test-SelectedRepair {
 function Get-Sha256Hash {
     param ($filePath)
     try {
-        $sha256 = Get-FileHash -Path $filePath -Algorithm SHA256 -ErrorAction Stop
-        return $sha256.Hash
+        $sha256 = (-join ([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.IO.File]::OpenRead($filePath)) | ForEach-Object { $_.ToString("x2") }))
+        return $sha256
     } catch {
         if ($allowVerbose -ne "No") { Write-Verbose "Error calculating SHA256 hash: $_" -Verbose }
         return $null
